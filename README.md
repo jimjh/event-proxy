@@ -27,7 +27,6 @@ I use vim with YCM for writing, and XCode for profiling and debugging.
 ```bash
 $ cd build
 $ cmake .. # -G Xcode
-$ make link_compile_commands_json  # for YouCompleteMe
 $ make
 ```
 

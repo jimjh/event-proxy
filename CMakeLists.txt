@@ -28,7 +28,7 @@ add_custom_command (OUTPUT "${COMPILATION_DB}"
   COMMAND "${CMAKE_COMMAND}" -E create_symlink "${PROJECT_BINARY_DIR}/compile_commands.json" "${PROJECT_SOURCE_DIR}/compile_commands.json"
   COMMENT "symlinking compilation database"
 )
-add_custom_target (link_compile_commands_json DEPENDS "${COMPILATION_DB}")
+add_custom_target (link_compile_commands_json ALL DEPENDS "${COMPILATION_DB}")
 
 # let executable depend on that one
 file(GLOB sources "src/*.c" "src/*.h")
