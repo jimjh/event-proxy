@@ -21,6 +21,7 @@
 static int _init_listen_fd(const str listen_addr,
                            const str listen_port,
                            int *sock_fd);
+static int _init_event_loop(int listen_fd);
 
 //static int _init_up_fd(const str up_addr,
 //                       const str up_port,
@@ -35,17 +36,27 @@ int proxy(const str listen_addr,
 
   dzlog_debug("proxy invoked: %s:%s -> %s:%s", listen_addr, listen_port, up_addr, up_port);
 
-  char printable[BUFFER_LEN];
   int listen_fd = -1;
   int rc = SUCCESS;
-  struct event_base *ev_base = NULL;
-
-  bzero(printable, BUFFER_LEN);
 
   // create listen file descriptor
   if (SUCCESS != (rc = _init_listen_fd(listen_addr, listen_port, &listen_fd))) {
     return rc;
   }
+
+  if (SUCCESS != (rc = _init_event_loop(listen_fd))) {
+    return rc;
+  }
+
+  return SUCCESS;
+
+}
+
+static int _init_event_loop(int listen_fd) {
+
+  char printable[BUFFER_LEN];
+  struct event_base *ev_base = NULL;
+  bzero(printable, BUFFER_LEN);
 
   // make descriptor non-blocking
   if (0 != fcntl(listen_fd, F_SETFL, O_NONBLOCK)) {
