@@ -20,5 +20,8 @@
 #define ERR_NET_FCNTL 54
 
 #define ERR_EVENT_BASE 61
+#define ERR_EVENT_NEW 62
+#define ERR_EVENT_ADD 63
+#define ERR_EVENT_DISPATCH 64
 
 #endif /* defs_h */

@@ -19,6 +19,7 @@ include_directories ("/usr/local/opt/libevent/include")
 
 # -- LIBRARIES --
 find_library(ZLOG_LIB zlog HINTS "${PROJECT_SOURCE_DIR}/../zlog/src")
+find_library(EVENT_LIB event HINTS "/user/local/opt/libevent/lib")
 
 # -- SOURCES --
 
@@ -33,7 +34,7 @@ add_custom_target (link_compile_commands_json ALL DEPENDS "${COMPILATION_DB}")
 # let executable depend on that one
 file(GLOB sources "src/*.c" "src/*.h")
 add_executable (main ${sources})
-target_link_libraries(main "${ZLOG_LIB}")
+target_link_libraries(main "${ZLOG_LIB}" "${EVENT_LIB}")
 
 # -- GCC --
 
