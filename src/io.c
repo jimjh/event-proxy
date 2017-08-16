@@ -38,7 +38,6 @@ static void errorcb (struct bufferevent *bev, short what, void *arg);
 
 /* Frees the struct and the inner strings. */
 void conn_details_free(conn_details *conn) {
-  event_base_free(conn->ev_base);
   conn->ev_base = NULL;
 
   free(conn->up_addr);

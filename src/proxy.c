@@ -56,6 +56,14 @@ int proxy(const str listen_addr,
 }
 
 // -- PRIVATE --
+static void quit_cb (int signum, short event, void *arg) {
+  struct event_base *ev_base = arg;
+  int rc = 0;
+  dzlog_info("quitting on signal: %d, event: %d", signum, event);
+  if (0 > (rc = event_base_loopexit(ev_base, NULL))) {  // exit after all current events
+    dzlog_error("loopexit failed with rc: %d", rc);
+  }
+}
 
 static int _init_event_loop(int listen_fd,
                             const str up_addr,
@@ -63,6 +71,7 @@ static int _init_event_loop(int listen_fd,
 
   struct event_base *ev_base = NULL;
   struct event *ev_listen = NULL;
+  struct event *ev_quit = NULL;
   conn_details *conn = NULL;
 
   // make descriptor non-blocking
@@ -78,6 +87,7 @@ static int _init_event_loop(int listen_fd,
 
   // create conn_details (this transfers ownership of ev_base to conn_details)
   if (NULL == (conn = conn_details_new(ev_base, up_addr, up_port))) {
+    event_base_free(ev_base); ev_base = NULL;
     return ERR_CONN_DETAILS_NEW;
   }
 
@@ -85,13 +95,30 @@ static int _init_event_loop(int listen_fd,
   // EV_READ means it's a read event
   // the last argument is passed along to the callback
   if (NULL == (ev_listen = event_new(ev_base, listen_fd, EV_READ|EV_PERSIST, do_accept, conn))) {
-    conn_details_free(conn);
+    event_base_free(ev_base); ev_base = NULL;
+    conn_details_free(conn); conn = NULL;
     return ERR_EVENT_NEW;
   }
 
   if (0 != event_add(ev_listen, NULL)) { // NULL means no timeout
-    conn_details_free(conn);
-    event_free(ev_listen);
+    event_base_free(ev_base); ev_base = NULL;
+    conn_details_free(conn); conn = NULL;
+    event_free(ev_listen); ev_listen = NULL;
+    return ERR_EVENT_ADD;
+  }
+
+  if (NULL == (ev_quit = evsignal_new(ev_base, 3, quit_cb, ev_base))) {
+    event_base_free(ev_base); ev_base = NULL;
+    conn_details_free(conn); conn = NULL;
+    event_free(ev_listen); ev_listen = NULL;
+    return ERR_EVENT_NEW;
+  }
+
+  if (0 != event_add(ev_quit, NULL)) { // NULL means no timeout
+    event_base_free(ev_base); ev_base = NULL;
+    conn_details_free(conn); conn = NULL;
+    event_free(ev_listen); ev_listen = NULL;
+    event_free(ev_quit); ev_quit = NULL;
     return ERR_EVENT_ADD;
   }
 
@@ -99,14 +126,18 @@ static int _init_event_loop(int listen_fd,
 
   dzlog_info("dispatching event loop");
   if (0 != event_base_dispatch(ev_base)) { // start loop; blocks
-    conn_details_free(conn);
-    event_free(ev_listen);
+    event_base_free(ev_base); ev_base = NULL;
+    conn_details_free(conn); conn = NULL;
+    event_free(ev_listen); ev_listen = NULL;
+    event_free(ev_quit); ev_quit = NULL;
     return ERR_EVENT_DISPATCH;
   }
 
   dzlog_info("event loop exited");
+  event_base_free(ev_base);
   conn_details_free(conn);
   event_free(ev_listen);
+  event_free(ev_quit);
   return SUCCESS;
 }
 
