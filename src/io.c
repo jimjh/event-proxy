@@ -14,6 +14,7 @@
 #include <event2/buffer.h>
 #include <event2/bufferevent.h>
 #include <zlog.h>
+#include "config.h"
 #include "errors.h"
 #include "defs.h"
 #include "client.h"

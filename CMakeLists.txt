@@ -3,6 +3,8 @@ project (event-proxy)
 
 # -- VARS --
 set(LISTEN_BACKLOG 10)
+set(BUFFER_LEN 1024)  # used for printing to stdout
+set(MAX_LINE 5120)  # used for reading from network
 
 # -- HEADERS --
 

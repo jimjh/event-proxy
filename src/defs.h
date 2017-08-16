@@ -7,8 +7,6 @@
 
 // -- TYPES --
 #define str char *
-#define BUFFER_LEN 1024
-#define MAX_LINE 5120
 
 // -- ERROR CODES --
 #define SUCCESS 0

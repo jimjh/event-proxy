@@ -10,6 +10,7 @@
 #include <netdb.h>
 #include <sys/socket.h>
 #include <zlog.h>
+#include "config.h"
 #include "errors.h"
 #include "client.h"
 

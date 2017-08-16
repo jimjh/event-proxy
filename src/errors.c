@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <strings.h>
 #include <zlog.h>
+#include "config.h"
 #include "errors.h"
 
 // -- PUBLIC --

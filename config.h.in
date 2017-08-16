@@ -2,5 +2,7 @@
 #define __event_proxy_h
 
 #define LISTEN_BACKLOG ${LISTEN_BACKLOG}
+#define BUFFER_LEN ${BUFFER_LEN}
+#define MAX_LINE ${MAX_LINE}
 
 #endif
