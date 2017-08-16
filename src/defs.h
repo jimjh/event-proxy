@@ -7,7 +7,8 @@
 
 // -- TYPES --
 #define str char *
-#define BUFFER_LEN 256
+#define BUFFER_LEN 1024
+#define MAX_LINE 1024
 
 // -- ERROR CODES --
 #define SUCCESS 0
@@ -23,5 +24,10 @@
 #define ERR_EVENT_NEW 62
 #define ERR_EVENT_ADD 63
 #define ERR_EVENT_DISPATCH 64
+
+#define ERR_BEVENT_NEW 71
+#define ERR_BEVENT_ENABLE 72
+
+#define ERR_CONN_DETAILS_NEW 81
 
 #endif /* defs_h */

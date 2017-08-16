@@ -2,11 +2,6 @@
  * Assembles components and runs the proxy.
  */
 
- /* TODO use libevent to handle events on listen_fd
-  * TODO on new connection, create upstream fd
-  * TODO proxy reads/writes with event loop
-  */
-
 #include <arpa/inet.h>
 #include <sys/param.h>
 #include <sys/socket.h>
@@ -17,23 +12,22 @@
 #include <zlog.h>
 #include <fcntl.h>
 #include <event2/event.h>
+#include <event2/bufferevent.h>
 #include "config.h"
 #include "errors.h"
+#include "io.h"
 #include "proxy.h"
 
 // -- DECLARATIONS --
 
+/* Creates a TCP socket, binds to the given port, and starts listening. */
 static int _init_listen_fd(const str listen_addr,
                            const str listen_port,
                            int *sock_fd);
-static int _init_event_loop(int listen_fd);
-static void inet_ntop_addrinfo(struct addrinfo *p, char *printable, size_t length);
-static void inet_ntop_sockaddr(struct sockaddr_storage *p, char *printable, size_t length);
-static void _do_accept(int listen_fd, short event, void *arg);
-
-//static int _init_up_fd(const str up_addr,
-//                       const str up_port,
-//                       int *sock_fd);
+/* Starts an event loop with the given listening file descriptor. */
+static int _init_event_loop(int listen_fd,
+                            const str up_addr,
+                            const str up_port);
 
 // -- PUBLIC --
 
@@ -53,7 +47,7 @@ int proxy(const str listen_addr,
   }
 
   // create event loop on given fd
-  if (SUCCESS != (rc = _init_event_loop(listen_fd))) {
+  if (SUCCESS != (rc = _init_event_loop(listen_fd, up_addr, up_port))) {
     return rc;
   }
 
@@ -63,12 +57,15 @@ int proxy(const str listen_addr,
 
 // -- PRIVATE --
 
-static int _init_event_loop(int listen_fd) {
+static int _init_event_loop(int listen_fd,
+                            const str up_addr,
+                            const str up_port) {
 
-  // TODO return ev_listen so that we can free it properly
+  // TODO return ev_listen and ev_base so that we can free them properly
 
   struct event_base *ev_base = NULL;
   struct event *ev_listen = NULL;
+  conn_details *conn = NULL;
 
   // make descriptor non-blocking
   if (0 != fcntl(listen_fd, F_SETFL, O_NONBLOCK)) {
@@ -77,22 +74,25 @@ static int _init_event_loop(int listen_fd) {
   }
 
   // initialize event loop
-  ev_base = event_base_new();
-  if (NULL == ev_base) {
+  if (NULL == (ev_base = event_base_new())) {
     return ERR_EVENT_BASE;
   }
 
+  // create conn_details (this transfers ownership of ev_base to conn_details)
+  if (NULL == (conn = conn_details_new(ev_base, up_addr, up_port))) {
+    return ERR_CONN_DETAILS_NEW;
+  }
+
   // create a new event (EV_PERSIST means add the event back to the select set after firing)
-  ev_listen = event_new(ev_base, listen_fd, EV_READ|EV_PERSIST, _do_accept, (void *) ev_base);
   // EV_READ means it's a read event
   // the last argument is passed along to the callback
-  if (NULL == ev_listen) {
-    event_base_free(ev_base);
+  if (NULL == (ev_listen = event_new(ev_base, listen_fd, EV_READ|EV_PERSIST, do_accept, conn))) {
+    conn_details_free(conn);
     return ERR_EVENT_NEW;
   }
 
   if (0 != event_add(ev_listen, NULL)) { // NULL means no timeout
-    event_base_free(ev_base);
+    conn_details_free(conn);
     event_free(ev_listen);
     return ERR_EVENT_ADD;
   }
@@ -101,33 +101,20 @@ static int _init_event_loop(int listen_fd) {
 
   dzlog_info("dispatching event loop");
   if (0 != event_base_dispatch(ev_base)) { // start loop; blocks
-    event_base_free(ev_base);
+    conn_details_free(conn);
     event_free(ev_listen);
     return ERR_EVENT_DISPATCH;
   }
 
+  dzlog_info("event loop exited");  // how will we ever get here?
+  conn_details_free(conn);
+  event_free(ev_listen);
   return SUCCESS;
 }
 
-static void inet_ntop_addrinfo(struct addrinfo *p, char *printable, size_t length) {
-  struct sockaddr_storage *ss = (struct sockaddr_storage *)p->ai_addr;
-  inet_ntop_sockaddr(ss, printable, length);
-}
-
-static void inet_ntop_sockaddr(struct sockaddr_storage *ss, char *printable, size_t length) {
-  // "network to presentation"
-  if (ss->ss_family == AF_INET) {
-    struct sockaddr_in *ipv4 = (struct sockaddr_in *)ss;
-    inet_ntop(ss->ss_family, &(ipv4->sin_addr), printable, length);
-  } else {
-    struct sockaddr_in6 *ipv6 = (struct sockaddr_in6 *)ss;
-    inet_ntop(ss->ss_family, &(ipv6->sin6_addr), printable, length);
-  }
-}
-
 static int _init_listen_fd(const str listen_addr,
-                         const str listen_port,
-                         int *sock_fd) {
+                           const str listen_port,
+                           int *sock_fd) {
 
   char printable[BUFFER_LEN];
   struct addrinfo hints;
@@ -144,7 +131,7 @@ static int _init_listen_fd(const str listen_addr,
   hints.ai_family = AF_UNSPEC;  // both v4 and v6
   hints.ai_socktype = SOCK_STREAM;  // TCP
   hints.ai_flags = AI_PASSIVE;  // fill in IP for me
-  if (0 != getaddrinfo(listen_addr, listen_port, &hints, &servinfo)) {
+  if (0 != getaddrinfo(listen_addr, listen_port, &hints, &servinfo)) {  // modern way, instead of gethostinfo and htons
     error("getaddrinfo");
     return ERR_NET_HOST;
   }
@@ -182,6 +169,7 @@ static int _init_listen_fd(const str listen_addr,
 
   // free address struct
   freeaddrinfo(servinfo);
+  servinfo = NULL;
   dzlog_debug("freeaddrinfo returned.");
 
   if (0 != listen(listen_fd, LISTEN_BACKLOG)) {
@@ -192,60 +180,4 @@ static int _init_listen_fd(const str listen_addr,
   dzlog_info("listening on fd %u", listen_fd);
   *sock_fd = listen_fd;
   return SUCCESS;
-}
-
-/* callback_fn on listen_fd */
-static void _do_accept(int listen_fd, short event, void *arg) {
-
-//  struct fd_state *state = NULL;
-  char printable[BUFFER_LEN];
-  struct event_base *base = NULL;
-  struct sockaddr_storage ss;
-  socklen_t slen = sizeof(ss);
-  int accept_fd = -1;
-  in_port_t port = -1;
-
-  bzero(printable, BUFFER_LEN);
-
-  // accept connection
-  dzlog_debug("received event: %u on fd: %u", event, listen_fd);
-  accept_fd = accept(listen_fd, (struct sockaddr *) &ss, &slen);
-  if (0 > accept_fd) {
-    error("accept");
-    return;
-  } else if (accept_fd > FD_SETSIZE) { // when does this happen?
-    dzlog_error("accept_fd: %u > %u, closing", accept_fd, FD_SETSIZE);
-    close(accept_fd);
-    return;
-  }
-
-  // set fd to be non blocking
-  base = arg;
-  if (0 != fcntl(listen_fd, F_SETFL, O_NONBLOCK)) {
-    error("fcntl");
-    return;
-  }
-
-  // print diagnostics
-  if (ss.ss_family == AF_INET) {
-    port = ((struct sockaddr_in *)(&ss))->sin_port;
-  } else {
-    port = ((struct sockaddr_in6 *)(&ss))->sin6_port;
-  }
-  inet_ntop_sockaddr(&ss, printable, BUFFER_LEN);
-  dzlog_info("accepted connection on %s:%u", printable, port);
-
-//  state = alloc_fd_state(base, accept_fd);
-//  if (NULL == state) {
-//    dzlog_error("could not allocate fd state for request");
-//    close(accept_fd);
-//  }
-//
-//  if (0 != event_add(state->read_event, NULL)) {
-//    // TODO free state
-//    close(accept_fd);
-//    return;
-//  }
-
-  return;
 }
