@@ -22,35 +22,9 @@
 typedef struct cb_arg_struct {
   int accept_fd;
   int client_fd;
-  struct evbuffer *a2c;
-  struct evbuffer *c2a;
+  struct bufferevent *a2c;  // pointers without ownership
+  struct bufferevent *c2a;  // pointers without ownership
 } cb_arg;
-
-static void cb_arg_free(cb_arg *arg) {
-  evbuffer_free(arg->a2c); arg->a2c = NULL;
-  evbuffer_free(arg->c2a); arg->c2a = NULL;
-  free(arg); arg = NULL;
-}
-
-static cb_arg *cb_arg_new() {
-
-  cb_arg *p = calloc(1, sizeof(cb_arg));
-
-  if (NULL == (p->a2c = evbuffer_new())) {
-    dzlog_error("evbuffer_new failed");
-    free(p); p = NULL;
-    return NULL;
-  }
-
-  if (NULL == (p->c2a = evbuffer_new())) {
-    dzlog_error("evbuffer_new failed");
-    evbuffer_free(p->a2c); p->a2c = NULL;
-    free(p); p = NULL;
-    return NULL;
-  }
-
-  return p;
-}
 
 // -- DECLARATIONS --
 /* initializes read/write/error callbacks on the given file descriptors. */
@@ -58,7 +32,6 @@ static int _init_bufferevents(struct event_base *ev_base, int accept_fd, int cli
 /* helper method for _init_bufferevents */
 static int _fd_event_new(struct event_base *ev_base, int fd, struct bufferevent **event, cb_arg *partner_arg);
 static void readcb (struct bufferevent *bev, void *arg);
-static void writecb (struct bufferevent *bev, void *arg);
 static void errorcb (struct bufferevent *bev, short what, void *arg);
 
 // -- PUBLIC --
@@ -152,7 +125,7 @@ void do_accept(int listen_fd, short event, void *arg) {
     close(client_fd);
     close(accept_fd);
   }
-  dzlog_info("bufferevent setup done on new connection at accept_fd %u and client_fd %u", accept_fd, client_fd);
+  dzlog_info("callbacks registered with new connection at accept_fd %u and client_fd %u", accept_fd, client_fd);
 }
 
 static int _init_bufferevents(struct event_base *ev_base, int accept_fd, int client_fd) {
@@ -161,26 +134,24 @@ static int _init_bufferevents(struct event_base *ev_base, int accept_fd, int cli
   // one for writing, and callbacks that are invoked under certain circumstances.
 
   int rc = SUCCESS;
-  struct bufferevent *accept_event = NULL;
-  struct bufferevent *client_event = NULL;
   cb_arg *pipe = NULL;
 
-  if (NULL == (pipe = cb_arg_new())) {
+  if (NULL == (pipe = calloc(1, sizeof(cb_arg)))) {
     error("cb_arg");
     return ERR_BEVENT_NEW;
   }
-  pipe->accept_fd = accept_fd;
   pipe->client_fd = client_fd;
+  pipe->accept_fd = accept_fd;
 
-  if (0 > (rc = _fd_event_new(ev_base, accept_fd, &accept_event, pipe))) {
-    cb_arg_free(pipe); pipe = NULL;
+  // note that client_event should be freed in the error callback
+  if (0 > (rc = _fd_event_new(ev_base, client_fd, &pipe->a2c, pipe))) {
+    free(pipe); pipe = NULL;
     return rc;
   }
 
-  // note that client_event should be freed in the error callback
-  if (0 > (rc = _fd_event_new(ev_base, client_fd, &client_event, pipe))) {
-    cb_arg_free(pipe); pipe = NULL;
-    bufferevent_free(accept_event); accept_event = NULL;
+  if (0 > (rc = _fd_event_new(ev_base, accept_fd, &pipe->c2a, pipe))) {
+    bufferevent_free(pipe->a2c); pipe->a2c = NULL;
+    free(pipe); pipe = NULL;
     return rc;
   }
 
@@ -202,9 +173,10 @@ static int _fd_event_new(struct event_base *ev_base, int fd, struct bufferevent 
     dzlog_error("bufferevent_socket_new returned NULL");
     return ERR_BEVENT_NEW;
   }
+  *event = bev;
 
   bufferevent_setwatermark(bev, EV_READ | EV_WRITE, 0, MAX_LINE);
-  bufferevent_setcb(bev, readcb, writecb, errorcb, arg);
+  bufferevent_setcb(bev, readcb, NULL, errorcb, arg);
 
   if (0 != bufferevent_enable(bev, EV_READ|EV_WRITE)) {
     dzlog_error("bufferevent_enable failed");
@@ -212,7 +184,6 @@ static int _fd_event_new(struct event_base *ev_base, int fd, struct bufferevent 
     return ERR_BEVENT_ENABLE;
   }
 
-  *event = bev;
   return SUCCESS;
 }
 
@@ -223,7 +194,7 @@ static void readcb (struct bufferevent *bev, void *arg) {
 
   cb_arg *pipe = arg;
   struct evbuffer *input = NULL;
-  struct evbuffer *output = NULL;
+  struct bufferevent *output = NULL;
   int fd = bufferevent_getfd(bev);
 
   dzlog_debug("received data on fd %u", fd);
@@ -239,33 +210,7 @@ static void readcb (struct bufferevent *bev, void *arg) {
     return;
   }
 
-  if (0 > evbuffer_add_buffer(output, input)) {  // do we need a lock here?
-    dzlog_error("evbuffer_add_buffer failed");  // what do we do here?
-  }
-}
-
-static void writecb (struct bufferevent *bev, void *arg) {
-
-  cb_arg *pipe = arg;
-  struct evbuffer *input = NULL;
-  struct evbuffer *output = NULL;
-  int fd = bufferevent_getfd(bev);
-
-  dzlog_debug("writing data to fd %u", fd);
-
-  // copy bytes from input to partner write buffer
-  output = bufferevent_get_output(bev);
-  if (fd == pipe->accept_fd) {
-    input = pipe->c2a;
-  } else if (fd == pipe->client_fd) {
-    input = pipe->a2c;
-  } else {
-    dzlog_error("unknown fd: %u", fd);
-    return;
-  }
-
-  // copy bytes from write buffer into output
-  if (0 > evbuffer_add_buffer(output, input)) {  // do we need a lock here?
+  if (0 > bufferevent_write_buffer(output, input)) { // do we need a lock here?
     dzlog_error("evbuffer_add_buffer failed");  // what do we do here?
   }
 }
@@ -283,10 +228,23 @@ static void errorcb (struct bufferevent *bev, short what, void *arg) {
   } else if (what & BEV_EVENT_TIMEOUT) {
     dzlog_error("connection timeout with fd %u", fd);
   }
+
+  // free bufferevent
   bufferevent_free(bev); bev = NULL;
   dzlog_debug("bev struct freed");
-  cb_arg_free(pipe); pipe = NULL;
+
+  // free the other end
+  if (fd == pipe->client_fd) {
+    bufferevent_flush(pipe->c2a, EV_READ | EV_WRITE, BEV_FINISHED);
+    bufferevent_free(pipe->c2a); pipe->c2a = NULL;
+  } else if (fd == pipe->accept_fd) {
+    bufferevent_flush(pipe->a2c, EV_READ | EV_WRITE, BEV_FINISHED);
+    bufferevent_free(pipe->a2c); pipe->a2c = NULL;
+  } else {
+    dzlog_error("unknown fd: %u", fd);
+  }
+
+  free(pipe); pipe = NULL;
   dzlog_debug("cb_arg struct freed");
-  // TODO close partner fd
-  // TODO flush on close
+
 }

@@ -61,9 +61,6 @@ static int _init_event_loop(int listen_fd,
                             const str up_addr,
                             const str up_port) {
 
-  // TODO return ev_listen so that we can free it properly
-  // TODO free conn_details
-
   struct event_base *ev_base = NULL;
   struct event *ev_listen = NULL;
   conn_details *conn = NULL;
@@ -107,7 +104,7 @@ static int _init_event_loop(int listen_fd,
     return ERR_EVENT_DISPATCH;
   }
 
-  dzlog_info("event loop exited");  // how will we ever get here?
+  dzlog_info("event loop exited");
   conn_details_free(conn);
   event_free(ev_listen);
   return SUCCESS;
