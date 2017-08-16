@@ -41,3 +41,10 @@ int ntoh_sockaddr(const struct sockaddr_storage *ss) {
     return ((struct sockaddr_in6 *)(&ss))->sin6_port;
   }
 }
+
+void inet_hints(struct addrinfo *hints) {
+  bzero(hints, sizeof(struct addrinfo));
+  hints->ai_family = AF_UNSPEC;  // both v4 and v6
+  hints->ai_socktype = SOCK_STREAM;  // TCP
+  hints->ai_flags = AI_PASSIVE;  // fill in IP for me
+}

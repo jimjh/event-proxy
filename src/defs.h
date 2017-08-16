@@ -19,6 +19,7 @@
 #define ERR_NET_HOST 52
 #define ERR_NET_LISTEN 53
 #define ERR_NET_FCNTL 54
+#define ERR_NET_CONNECT 55
 
 #define ERR_EVENT_BASE 61
 #define ERR_EVENT_NEW 62

@@ -61,7 +61,8 @@ static int _init_event_loop(int listen_fd,
                             const str up_addr,
                             const str up_port) {
 
-  // TODO return ev_listen and ev_base so that we can free them properly
+  // TODO return ev_listen so that we can free it properly
+  // TODO free conn_details
 
   struct event_base *ev_base = NULL;
   struct event *ev_listen = NULL;
@@ -127,10 +128,7 @@ static int _init_listen_fd(const str listen_addr,
   dzlog_debug("_init_sock_fd invoked: %s:%s", listen_addr, listen_port);
 
   // first, do a DNS lookup (which also works with IP addresses) to construct addrinfo
-  bzero(&hints, sizeof(hints));
-  hints.ai_family = AF_UNSPEC;  // both v4 and v6
-  hints.ai_socktype = SOCK_STREAM;  // TCP
-  hints.ai_flags = AI_PASSIVE;  // fill in IP for me
+  inet_hints(&hints);
   if (0 != getaddrinfo(listen_addr, listen_port, &hints, &servinfo)) {  // modern way, instead of gethostinfo and htons
     error("getaddrinfo");
     return ERR_NET_HOST;
@@ -162,15 +160,16 @@ static int _init_listen_fd(const str listen_addr,
     break;
   }
 
+  // free address struct
+  if (NULL != servinfo) {
+    freeaddrinfo(servinfo);
+    servinfo = NULL;
+  }
+
   if (NULL == p) {
     // reached end of loop
     return ERR_NET_BIND;
   }
-
-  // free address struct
-  freeaddrinfo(servinfo);
-  servinfo = NULL;
-  dzlog_debug("freeaddrinfo returned.");
 
   if (0 != listen(listen_fd, LISTEN_BACKLOG)) {
     error("listen");

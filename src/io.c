@@ -15,11 +15,12 @@
 #include <zlog.h>
 #include "errors.h"
 #include "defs.h"
+#include "client.h"
 #include "io.h"
 
 // -- DECLARATIONS --
 /* initializes read/write/error callbacks on the given file descriptor. */
-static int _init_bufferevents(struct event_base *ev_base, int accept_fd);
+static int _init_bufferevents(struct event_base *ev_base, int accept_fd, int client_fd);
 static void readcb (struct bufferevent *bev, void *arg);
 static void writecb (struct bufferevent *bev, void *arg);
 static void errorcb (struct bufferevent *bev, short what, void *arg);
@@ -70,7 +71,6 @@ conn_details *conn_details_new(struct event_base *ev_base,
   return conn;
 }
 
-/* callback_fn on listen_fd */
 void do_accept(int listen_fd, short event, void *arg) {
 
   char printable[BUFFER_LEN];
@@ -78,6 +78,7 @@ void do_accept(int listen_fd, short event, void *arg) {
   struct sockaddr_storage ss;
   socklen_t slen = sizeof(ss);
   int accept_fd = -1;
+  int client_fd = -1;
   in_port_t port = -1;
 
   bzero(printable, BUFFER_LEN);
@@ -99,33 +100,61 @@ void do_accept(int listen_fd, short event, void *arg) {
   inet_ntop_sockaddr(&ss, printable, BUFFER_LEN);
   dzlog_info("accepted connection on %s:%u with fd %u", printable, port, accept_fd);
 
-  // TODO create client connection to upstream
+  // create client connection to upstream
+  if (SUCCESS != init_client_fd(conn->up_addr, conn->up_port, &client_fd)) {
+    dzlog_error("could not connect to %s:%s", conn->up_addr, conn->up_port);
+    close(accept_fd);
+    return;
+  }
+  dzlog_info("created connection to %s:%s with fd %u", conn->up_addr, conn->up_port, client_fd);
 
   // init buffer events
-  if (SUCCESS != _init_bufferevents(conn->ev_base, accept_fd)) {
+  if (SUCCESS != _init_bufferevents(conn->ev_base, accept_fd, client_fd)) {
+    close(client_fd);
     close(accept_fd);
   }
-  dzlog_info("bufferevent setup done on new connection at accept_fd %u", accept_fd);
+  dzlog_info("bufferevent setup done on new connection at accept_fd %u and client_fd %u", accept_fd, client_fd);
 }
 
-static int _init_bufferevents(struct event_base *ev_base, int accept_fd) {
+static int _init_bufferevents(struct event_base *ev_base, int accept_fd, int client_fd) {
+  // Use bufferevent API.
+  // Bufferevents are higher level than evbuffers: each has an underlying evbuffer for reading and
+  // one for writing, and callbacks that are invoked under certain circumstances.
 
   struct bufferevent *bev = NULL;
+  struct bufferevent *buffer_events[2];
 
-  // set fd to be non blocking
+  bzero(buffer_events, 2 * sizeof(struct bufferevent *));
+
+  // set accept_fd to be non blocking
   if (0 != fcntl(accept_fd, F_SETFL, O_NONBLOCK)) {
     error("fcntl");
     return ERR_NET_FCNTL;
   }
 
-  // use bufferevent API
-  // Bufferevents are higher level than evbuffers: each has an underlying evbuffer for reading and
-  // one for writing, and callbacks that are invoked under certain circumstances.
-  // Note that bev gets freed in the error callback
-  if (NULL == (bev = bufferevent_socket_new(ev_base, accept_fd, BEV_OPT_CLOSE_ON_FREE))) {
-    dzlog_error("bufferevent_socket_new returned NULL");
+  // set client_fd to be non blocking
+  if (0 != fcntl(client_fd, F_SETFL, O_NONBLOCK)) {
+    error("fcntl");
+    return ERR_NET_FCNTL;
+  }
+
+  // note that bev gets freed in the error callback
+  if (0 > bufferevent_pair_new(ev_base, 0, buffer_events)) {
+    dzlog_error("bufferevent_pair_new failed");
     return ERR_BEVENT_NEW;
   }
+  if (0 > bufferevent_setfd(buffer_events[0], accept_fd)) {
+    dzlog_error("bufferevent_pair_new failed");
+    return ERR_BEVENT_NEW;
+  }
+  if (0 > bufferevent_setfd(buffer_events[0], accept_fd)) {
+    dzlog_error("bufferevent_pair_new failed");
+    return ERR_BEVENT_NEW;
+  }
+  /*if (NULL == (bev = bufferevent_socket_new(ev_base, accept_fd, BEV_OPT_CLOSE_ON_FREE))) {
+    dzlog_error("bufferevent_socket_new returned NULL");
+    return ERR_BEVENT_NEW;
+  }*/
 
   bufferevent_setcb(bev, readcb, writecb, errorcb, (void *) (long) accept_fd);
   bufferevent_setwatermark(bev, EV_READ | EV_WRITE, 0, MAX_LINE);
@@ -167,4 +196,6 @@ static void errorcb (struct bufferevent *bev, short what, void *arg) {
   bufferevent_free(bev);
   bev = NULL;
   dzlog_debug("bev struct freed");
+  // TODO close client_fd
+  // TODO flush on close
 }
