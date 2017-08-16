@@ -34,7 +34,7 @@ int main(const int argc,
   dzlog_debug("argc: %d", argc);
   dzlog_debug("argv: %lu", sizeof(argv));
 
-  if (SUCCESS != (rc = proxy("localhost", "8080", "localhost", "8081"))) {
+  if (SUCCESS != (rc = proxy("localhost", "8080", "www.wangafu.net", "80"))) {
     _free_logger();
     return rc;
   }

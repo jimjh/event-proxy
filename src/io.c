@@ -177,7 +177,7 @@ static int _fd_event_new(struct event_base *ev_base, int fd, struct bufferevent 
   bufferevent_setwatermark(bev, EV_READ | EV_WRITE, 0, MAX_LINE);
   bufferevent_setcb(bev, readcb, NULL, errorcb, arg);
 
-  if (0 != bufferevent_enable(bev, EV_READ|EV_WRITE)) {
+  if (0 != bufferevent_enable(bev, EV_READ | EV_WRITE)) {
     dzlog_error("bufferevent_enable failed");
     bufferevent_free(bev); bev = NULL;
     return ERR_BEVENT_ENABLE;
@@ -209,6 +209,8 @@ static void readcb (struct bufferevent *bev, void *arg) {
     return;
   }
 
+  dzlog_info("copying %zu bytes from %d", evbuffer_get_length(input), fd);
+
   if (0 > bufferevent_write_buffer(output, input)) { // do we need a lock here?
     dzlog_error("evbuffer_add_buffer failed");  // what do we do here?
   }
@@ -217,6 +219,7 @@ static void readcb (struct bufferevent *bev, void *arg) {
 static void errorcb (struct bufferevent *bev, short what, void *arg) {
   // An event/error callback for a bufferevent. The event callback is triggered if either an EOF
   // condition or another unrecoverable error was encountered.
+
   int fd = bufferevent_getfd(bev);
   cb_arg *pipe = arg;
   if (what & BEV_EVENT_EOF) {
@@ -228,22 +231,25 @@ static void errorcb (struct bufferevent *bev, short what, void *arg) {
     dzlog_error("connection timeout with fd %u", fd);
   }
 
-  // free bufferevent
+  // flush the other end
+  if (pipe->c2a != NULL) bufferevent_flush(pipe->c2a, EV_WRITE, BEV_FINISHED);
+  if (pipe->a2c != NULL) bufferevent_flush(pipe->a2c, EV_WRITE, BEV_FINISHED);
+
+  // free bufferevent, and make sure we set shared references to NULL
   bufferevent_free(bev); bev = NULL;
+  if (fd == pipe->client_fd) {
+    pipe->a2c = NULL;
+  } else {
+    pipe->c2a = NULL;
+  }
   dzlog_debug("bev struct freed");
 
-  // free the other end
-  if (fd == pipe->client_fd) {
-    bufferevent_flush(pipe->c2a, EV_READ | EV_WRITE, BEV_FINISHED);
-    bufferevent_free(pipe->c2a); pipe->c2a = NULL;
-  } else if (fd == pipe->accept_fd) {
-    bufferevent_flush(pipe->a2c, EV_READ | EV_WRITE, BEV_FINISHED);
-    bufferevent_free(pipe->a2c); pipe->a2c = NULL;
-  } else {
-    dzlog_error("unknown fd: %u", fd);
-  }
+  // NOTE we can't get a callback if we close it ourselves, so wait for the server
+  // to close.
 
-  free(pipe); pipe = NULL;
-  dzlog_debug("cb_arg struct freed");
+  if (NULL == pipe->a2c && NULL == pipe->c2a) {
+    free(pipe); pipe = NULL;
+    dzlog_debug("cb_arg struct freed");
+  }
 
 }
