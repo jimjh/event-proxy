@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <event2/event.h>
+#include <event2/buffer.h>
 #include <event2/bufferevent.h>
 #include <zlog.h>
 #include "errors.h"
@@ -18,9 +19,44 @@
 #include "client.h"
 #include "io.h"
 
+typedef struct cb_arg_struct {
+  int accept_fd;
+  int client_fd;
+  struct evbuffer *a2c;
+  struct evbuffer *c2a;
+} cb_arg;
+
+static void cb_arg_free(cb_arg *arg) {
+  evbuffer_free(arg->a2c); arg->a2c = NULL;
+  evbuffer_free(arg->c2a); arg->c2a = NULL;
+  free(arg); arg = NULL;
+}
+
+static cb_arg *cb_arg_new() {
+
+  cb_arg *p = calloc(1, sizeof(cb_arg));
+
+  if (NULL == (p->a2c = evbuffer_new())) {
+    dzlog_error("evbuffer_new failed");
+    free(p); p = NULL;
+    return NULL;
+  }
+
+  if (NULL == (p->c2a = evbuffer_new())) {
+    dzlog_error("evbuffer_new failed");
+    evbuffer_free(p->a2c); p->a2c = NULL;
+    free(p); p = NULL;
+    return NULL;
+  }
+
+  return p;
+}
+
 // -- DECLARATIONS --
-/* initializes read/write/error callbacks on the given file descriptor. */
+/* initializes read/write/error callbacks on the given file descriptors. */
 static int _init_bufferevents(struct event_base *ev_base, int accept_fd, int client_fd);
+/* helper method for _init_bufferevents */
+static int _fd_event_new(struct event_base *ev_base, int fd, struct bufferevent **event, cb_arg *partner_arg);
 static void readcb (struct bufferevent *bev, void *arg);
 static void writecb (struct bufferevent *bev, void *arg);
 static void errorcb (struct bufferevent *bev, short what, void *arg);
@@ -57,6 +93,7 @@ conn_details *conn_details_new(struct event_base *ev_base,
   length = strnlen(up_addr, MAX_LINE);
   if (NULL == (conn->up_addr = calloc(1, length + 1))) {  // add one for null byte
     error("calloc up_addr");
+    free(conn);
     return NULL;
   }
   strncpy(conn->up_addr, up_addr, length);
@@ -64,6 +101,8 @@ conn_details *conn_details_new(struct event_base *ev_base,
   length = strnlen(up_port, MAX_LINE);
   if (NULL == (conn->up_port = calloc(1, length + 1))) {  // add one for null byte
     error("calloc up_port");
+    free(conn->up_addr);
+    free(conn);
     return NULL;
   }
   strncpy(conn->up_port, up_port, length);
@@ -121,49 +160,59 @@ static int _init_bufferevents(struct event_base *ev_base, int accept_fd, int cli
   // Bufferevents are higher level than evbuffers: each has an underlying evbuffer for reading and
   // one for writing, and callbacks that are invoked under certain circumstances.
 
+  int rc = SUCCESS;
+  struct bufferevent *accept_event = NULL;
+  struct bufferevent *client_event = NULL;
+  cb_arg *pipe = NULL;
+
+  if (NULL == (pipe = cb_arg_new())) {
+    error("cb_arg");
+    return ERR_BEVENT_NEW;
+  }
+  pipe->accept_fd = accept_fd;
+  pipe->client_fd = client_fd;
+
+  if (0 > (rc = _fd_event_new(ev_base, accept_fd, &accept_event, pipe))) {
+    cb_arg_free(pipe); pipe = NULL;
+    return rc;
+  }
+
+  // note that client_event should be freed in the error callback
+  if (0 > (rc = _fd_event_new(ev_base, client_fd, &client_event, pipe))) {
+    cb_arg_free(pipe); pipe = NULL;
+    bufferevent_free(accept_event); accept_event = NULL;
+    return rc;
+  }
+
+  return SUCCESS;
+}
+
+static int _fd_event_new(struct event_base *ev_base, int fd, struct bufferevent **event, cb_arg *arg) {
+
   struct bufferevent *bev = NULL;
-  struct bufferevent *buffer_events[2];
 
-  bzero(buffer_events, 2 * sizeof(struct bufferevent *));
-
-  // set accept_fd to be non blocking
-  if (0 != fcntl(accept_fd, F_SETFL, O_NONBLOCK)) {
+  // set fd to be non blocking
+  if (0 != fcntl(fd, F_SETFL, O_NONBLOCK)) {
     error("fcntl");
     return ERR_NET_FCNTL;
   }
 
-  // set client_fd to be non blocking
-  if (0 != fcntl(client_fd, F_SETFL, O_NONBLOCK)) {
-    error("fcntl");
-    return ERR_NET_FCNTL;
-  }
-
-  // note that bev gets freed in the error callback
-  if (0 > bufferevent_pair_new(ev_base, 0, buffer_events)) {
-    dzlog_error("bufferevent_pair_new failed");
-    return ERR_BEVENT_NEW;
-  }
-  if (0 > bufferevent_setfd(buffer_events[0], accept_fd)) {
-    dzlog_error("bufferevent_pair_new failed");
-    return ERR_BEVENT_NEW;
-  }
-  if (0 > bufferevent_setfd(buffer_events[0], accept_fd)) {
-    dzlog_error("bufferevent_pair_new failed");
-    return ERR_BEVENT_NEW;
-  }
-  /*if (NULL == (bev = bufferevent_socket_new(ev_base, accept_fd, BEV_OPT_CLOSE_ON_FREE))) {
+  // note that bev and partner_arg get freed in the error callback
+  if (NULL == (bev = bufferevent_socket_new(ev_base, fd, BEV_OPT_CLOSE_ON_FREE))) {
     dzlog_error("bufferevent_socket_new returned NULL");
     return ERR_BEVENT_NEW;
-  }*/
+  }
 
-  bufferevent_setcb(bev, readcb, writecb, errorcb, (void *) (long) accept_fd);
   bufferevent_setwatermark(bev, EV_READ | EV_WRITE, 0, MAX_LINE);
+  bufferevent_setcb(bev, readcb, writecb, errorcb, arg);
+
   if (0 != bufferevent_enable(bev, EV_READ|EV_WRITE)) {
     dzlog_error("bufferevent_enable failed");
-    bufferevent_free(bev);
+    bufferevent_free(bev); bev = NULL;
     return ERR_BEVENT_ENABLE;
   }
 
+  *event = bev;
   return SUCCESS;
 }
 
@@ -171,31 +220,73 @@ static void readcb (struct bufferevent *bev, void *arg) {
   // A read callback for a bufferevent. The read callback is triggered when new data
   // arrives in the input buffer and the amount of readable data exceed the low watermark
   // which is 0 by default.
-  in_port_t port = (int) arg;
-  dzlog_info("received data on fd %u", port);
-  bev = NULL;
+
+  cb_arg *pipe = arg;
+  struct evbuffer *input = NULL;
+  struct evbuffer *output = NULL;
+  int fd = bufferevent_getfd(bev);
+
+  dzlog_debug("received data on fd %u", fd);
+
+  // copy bytes from input to partner write buffer
+  input = bufferevent_get_input(bev);
+  if (fd == pipe->accept_fd) {
+    output = pipe->a2c;
+  } else if (fd == pipe->client_fd) {
+    output = pipe->c2a;
+  } else {
+    dzlog_error("unknown fd: %u", fd);
+    return;
+  }
+
+  if (0 > evbuffer_add_buffer(output, input)) {  // do we need a lock here?
+    dzlog_error("evbuffer_add_buffer failed");  // what do we do here?
+  }
 }
 
-static void writecb (struct bufferevent *bev, void *ctx) {
-  bev = NULL;
-  ctx = NULL;
+static void writecb (struct bufferevent *bev, void *arg) {
+
+  cb_arg *pipe = arg;
+  struct evbuffer *input = NULL;
+  struct evbuffer *output = NULL;
+  int fd = bufferevent_getfd(bev);
+
+  dzlog_debug("writing data to fd %u", fd);
+
+  // copy bytes from input to partner write buffer
+  output = bufferevent_get_output(bev);
+  if (fd == pipe->accept_fd) {
+    input = pipe->c2a;
+  } else if (fd == pipe->client_fd) {
+    input = pipe->a2c;
+  } else {
+    dzlog_error("unknown fd: %u", fd);
+    return;
+  }
+
+  // copy bytes from write buffer into output
+  if (0 > evbuffer_add_buffer(output, input)) {  // do we need a lock here?
+    dzlog_error("evbuffer_add_buffer failed");  // what do we do here?
+  }
 }
 
 static void errorcb (struct bufferevent *bev, short what, void *arg) {
   // An event/error callback for a bufferevent. The event callback is triggered if either an EOF
   // condition or another unrecoverable error was encountered.
-  int fd = (int) arg;
+  int fd = bufferevent_getfd(bev);
+  cb_arg *pipe = arg;
   if (what & BEV_EVENT_EOF) {
     // connection closed
-    dzlog_info("connection at fd %u closed", fd);
+    dzlog_info("connection with fd %u closed", fd);
   } else if (what & BEV_EVENT_ERROR) {
     error("connection error");
   } else if (what & BEV_EVENT_TIMEOUT) {
-    dzlog_error("connection timeout at fd %u", fd);
+    dzlog_error("connection timeout with fd %u", fd);
   }
-  bufferevent_free(bev);
-  bev = NULL;
+  bufferevent_free(bev); bev = NULL;
   dzlog_debug("bev struct freed");
-  // TODO close client_fd
+  cb_arg_free(pipe); pipe = NULL;
+  dzlog_debug("cb_arg struct freed");
+  // TODO close partner fd
   // TODO flush on close
 }
