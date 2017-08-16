@@ -5,6 +5,7 @@
 #include <arpa/inet.h>
 #include <sys/param.h>
 #include <sys/socket.h>
+#include <signal.h>
 #include <strings.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -72,7 +73,7 @@ static int _init_event_loop(int listen_fd,
   struct event_base *ev_base = NULL;
   struct event *ev_listen = NULL;
   struct event *ev_quit = NULL;
-  conn_details *conn = NULL;
+  conn_details *conn = NULL;  // allocated struct to be shared with all upstream clients
 
   // make descriptor non-blocking
   if (0 != fcntl(listen_fd, F_SETFL, O_NONBLOCK)) {
@@ -107,7 +108,7 @@ static int _init_event_loop(int listen_fd,
     return ERR_EVENT_ADD;
   }
 
-  if (NULL == (ev_quit = evsignal_new(ev_base, 3, quit_cb, ev_base))) {
+  if (NULL == (ev_quit = evsignal_new(ev_base, SIGQUIT, quit_cb, ev_base))) {
     event_base_free(ev_base); ev_base = NULL;
     conn_details_free(conn); conn = NULL;
     event_free(ev_listen); ev_listen = NULL;
