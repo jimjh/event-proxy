@@ -198,6 +198,7 @@ static int _init_listen_fd(const str listen_addr,
 
   if (NULL == p) {
     // reached end of loop
+    error("listen");
     return ERR_NET_BIND;
   }
 
