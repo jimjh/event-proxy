@@ -19,6 +19,7 @@ $ mkdir build
 $ cd build
 $ cmake ..
 $ make
+$ cd ..; build/main  # starts the proxy
 ```
 
 ## Design/Requirements
