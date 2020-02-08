@@ -6,6 +6,7 @@
 #include <sys/param.h>
 #include <sys/socket.h>
 #include <signal.h>
+#include <string.h>
 #include <strings.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -153,7 +154,7 @@ static int _init_listen_fd(const str listen_addr,
   int yes = 1;
   struct addrinfo *p = NULL;
 
-  bzero(printable, BUFFER_LEN);
+  memset(printable, 0, BUFFER_LEN);
   dzlog_debug("_init_sock_fd invoked: %s:%s", listen_addr, listen_port);
 
   // first, do a DNS lookup (which also works with IP addresses) to construct addrinfo

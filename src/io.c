@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <sys/param.h>
 #include <netdb.h>
+#include <string.h>
 #include <strings.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -93,7 +94,7 @@ void do_accept(int listen_fd, short event, void *arg) {
   int client_fd = -1;
   in_port_t port = -1;
 
-  bzero(printable, BUFFER_LEN);
+  memset(printable, 0, BUFFER_LEN);
 
   // accept connection
   dzlog_debug("received event: %u on fd: %u", event, listen_fd);

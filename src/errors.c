@@ -1,6 +1,7 @@
 /* errors.c */
 
 #include <errno.h>
+#include <string.h>
 #include <strings.h>
 #include <zlog.h>
 #include "config.h"
@@ -11,7 +12,7 @@
 int error(const str message) {
 
   char printable[BUFFER_LEN];
-  bzero(printable, BUFFER_LEN);
+  memset(printable, 0, BUFFER_LEN);
 
   strerror_r(errno, printable, BUFFER_LEN);
   dzlog_error("%s: %s", message, printable);
@@ -44,7 +45,7 @@ int ntoh_sockaddr(const struct sockaddr_storage *ss) {
 }
 
 void inet_hints(struct addrinfo *hints) {
-  bzero(hints, sizeof(struct addrinfo));
+  memset(hints, 0, sizeof(struct addrinfo));
   hints->ai_family = AF_UNSPEC;  // both v4 and v6
   hints->ai_socktype = SOCK_STREAM;  // TCP
   hints->ai_flags = AI_PASSIVE;  // fill in IP for me

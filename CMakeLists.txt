@@ -16,7 +16,7 @@ configure_file (
 )
 include_directories("${PROJECT_BINARY_DIR}")
 include_directories (lib)  # specifies where to look for included header files
-include_directories ("/projects/zlog/src")
+include_directories ("${PROJECT_SOURCE_DIR}/../zlog/src")
 include_directories ("/usr/local/opt/libevent/include")
 
 # -- LIBRARIES --
@@ -41,10 +41,11 @@ target_link_libraries(main "${ZLOG_LIB}" "${EVENT_LIB}")
 # -- GCC --
 
 # gcc args
-add_definitions(-std=c11)
+add_definitions(-std=gnu11)
 add_definitions(-Werror)
 add_definitions(-Wall)
 add_definitions(-Wextra)
+add_definitions(-D_POSIX_C_SOURCE=200809L)
 
 # generate compilation database for parsers
 set (CMAKE_EXPORT_COMPILE_COMMANDS ON)

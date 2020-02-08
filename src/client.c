@@ -3,6 +3,7 @@
  * client for connecting to the upstream
  */
 
+#include <string.h>
 #include <strings.h>
 #include <unistd.h>
 #include <arpa/inet.h>
@@ -24,7 +25,7 @@ int init_client_fd(const str up_addr,
   int client_fd = -1;
   struct addrinfo *p = NULL;
 
-  bzero(printable, BUFFER_LEN);
+  memset(printable, 0, BUFFER_LEN);
   dzlog_debug("init_client_fd invoked: %s:%s", up_addr, up_port);
 
   // convert str to addr_info

@@ -2,6 +2,25 @@
 
 A event-based proxy written in C for self-study purposes.
 
+## Usage
+
+First, download all sources and dependencies:
+
+```
+$ sudo apt install libevent-dev
+$ git clone git@github.com:jimjh/event-proxy.git
+$ git clone git@github.com:HardySimpson/zlog.git
+```
+
+Then, build and run
+
+```
+$ mkdir build
+$ cd build
+$ cmake ..
+$ make
+```
+
 ## Design/Requirements
 
 - bind to and listen on IPv4 or IPv6 address
