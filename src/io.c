@@ -176,7 +176,7 @@ static int _fd_event_new(struct event_base *ev_base, int fd, struct bufferevent 
   }
   *event = bev;
 
-  bufferevent_setwatermark(bev, EV_READ | EV_WRITE, 0, MAX_LINE);
+  //bufferevent_setwatermark(bev, EV_READ | EV_WRITE, 0, MAX_LINE);
   bufferevent_setcb(bev, readcb, NULL, errorcb, arg);
 
   if (0 != bufferevent_enable(bev, EV_READ | EV_WRITE)) {
